@@ -14,7 +14,7 @@ public class Program
 
     public void Run()
     {
-        long[,] results =  new long[3, 4];
+        long[,] results = new long[3, 4];
 
         (results[0, 0], results[0, 1], results[0, 2], results[0, 3]) = BenchSum(Enumerable.Range(1, 100_000).ToArray());
         (results[1, 0], results[1, 1], results[1, 2], results[1, 3]) = BenchSum(Enumerable.Range(1, 1_000_000).ToArray());
@@ -35,12 +35,13 @@ public class Program
         long sum3 = Benchmark.Bench(array, CalculateSum_Parallel, out var elapsedTime3);
         long sum4 = Benchmark.Bench(array, CalculateSum_ParallelFor, out var elapsedTime4);
 
-        if ((sum != sum2) || (sum != sum3) || (sum != sum4)){
+        if ((sum != sum2) || (sum != sum3) || (sum != sum4))
+        {
             throw new ApplicationException("Something wrong");
         }
-        
+
         return (elapsedTime, elapsedTime2, elapsedTime3, elapsedTime4);
-    } 
+    }
 
     public long CalculateSum_Simple(int[] array)
     {
@@ -50,35 +51,62 @@ public class Program
     public long CalculateSum_ParallelFor(int[] array)
     {
         long sum = 0;
-        
-        Parallel.For<long>(0, array.Length, () => 0, 
-        (i, loopState, localVar) => 
+
+        Parallel.For<long>(0, array.Length, () => 0,
+        (i, loopState, localVar) =>
         {
-            localVar = localVar + Convert.ToInt64(array[i]); 
+            localVar = localVar + Convert.ToInt64(array[i]);
             return localVar;
-        }, localVal => {
+        }, localVal =>
+        {
             Interlocked.Add(ref sum, localVal);
         });
 
         return sum;
     }
 
-
     public long CalculateSum_Thread(int[] array)
     {
-        long sum = 0;
-        ManualResetEvent resetEvent = new ManualResetEvent(false);
+        long totalSum = 0;
+        const int Chunks = 8;
 
-        var thread = new Thread(() => {
-            sum = array.Select(f => Convert.ToInt64(f)).Aggregate((a, b) => a + b);
-            resetEvent.Set();
-        });
+        int chunkSize = array.Length / Chunks;
+        int finishedThreadCount = 0;
 
-        thread.Start();
+        int chunkFirsIndex = 0;
+        int chunkLastIndex = chunkSize;
 
-        resetEvent.WaitOne();
+        ManualResetEvent manualResetEvent = new ManualResetEvent(false);
 
-        return sum;
+        while (chunkLastIndex <= array.Length)
+        {
+            new Thread((obj) =>
+            {
+                long chunkSum = 0;
+                (int chunkFirsIndex, int chunkLastIndex) = obj as Tuple<int, int>;
+
+                Span<int> span = array.AsSpan(new Range(chunkFirsIndex, chunkLastIndex));
+                foreach (int value in span)
+                {
+                    chunkSum += value;
+                }
+
+                Interlocked.Add(ref totalSum, chunkSum);
+
+                Interlocked.Increment(ref finishedThreadCount);
+                if (finishedThreadCount >= Chunks)
+                {
+                    manualResetEvent.Set();
+                }
+            }).Start(new Tuple<int, int>(chunkFirsIndex, chunkLastIndex));
+
+            chunkFirsIndex += chunkSize;
+            chunkLastIndex = chunkFirsIndex + chunkSize;
+        }
+
+        manualResetEvent.WaitOne();
+
+        return totalSum;
     }
 
     public long CalculateSum_Parallel(int[] array)
